@@ -1,0 +1,99 @@
+openapi: 3.0.3
+info:
+  title: Noreium API
+  version: 1.0.0
+servers:
+  - url: http://localhost:3000
+paths:
+  /api/auth/register:
+    post:
+      summary: Register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '201':
+          description: Created
+  /api/auth/login:
+    post:
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: OK
+  /api/library-items:
+    get:
+      summary: List library items for current user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+    post:
+      summary: Create library item
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+  /api/library-items/{id}:
+    get:
+      summary: Get library item
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+  /api/collections:
+    get:
+      summary: List collections
+      security:
+        - bearerAuth: []
+    post:
+      summary: Create collection
+      security:
+        - bearerAuth: []
+  /api/collections/{id}/items:
+    post:
+      summary: Add item to collection
+      security:
+        - bearerAuth: []
+    delete:
+      summary: Remove item from collection
+      security:
+        - bearerAuth: []
+  /api/generator/script:
+    post:
+      summary: Generate platform script for collection
+      security:
+        - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

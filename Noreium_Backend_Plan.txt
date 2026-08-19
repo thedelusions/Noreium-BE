@@ -1,0 +1,943 @@
+NOREIUM — BACKEND DEVELOPMENT PLAN
+================================
+
+Project Goal
+------------
+Noreium is a personal developer environment management system. It stores development tools, APIs, websites, resources, and secrets in one place, groups them into collections/environments, and generates platform-specific setup scripts or checklists.
+
+Core backend goal for MVP:
+1. Authenticate a user.
+2. Store and manage library items.
+3. Group library items into collections.
+4. Generate Windows/Linux setup scripts from collections.
+
+Technology Direction
+--------------------
+Runtime:
+- Node.js
+
+Language:
+- TypeScript
+
+Framework:
+- Express.js
+
+Database:
+- MongoDB
+
+ODM:
+- Mongoose
+
+Validation:
+- Zod
+
+Authentication:
+- JWT or an established authentication library.
+- Keep authentication isolated so it can be changed later.
+
+Testing:
+- Vitest or Jest
+- Supertest for API integration tests
+
+Development:
+- ESLint
+- Prettier
+- dotenv
+- Git/GitHub
+
+Architecture
+------------
+Use a modular layered architecture:
+
+Request
+  -> Route
+  -> Middleware
+  -> Controller
+  -> Service
+  -> Repository
+  -> Mongoose Model
+  -> MongoDB
+
+Responsibilities:
+
+Routes:
+- Define HTTP methods and paths.
+- Attach middleware.
+- Never contain business logic.
+
+Middleware:
+- Authentication.
+- Authorization.
+- Request validation.
+- Centralized error handling.
+- Optional logging/rate limiting later.
+
+Controllers:
+- Receive HTTP requests.
+- Read params/query/body/user.
+- Call the relevant service.
+- Return HTTP responses.
+- Do not contain business rules.
+- Do not perform direct database queries.
+
+Services:
+- Contain application/business logic.
+- Validate ownership rules through repositories.
+- Coordinate multiple repositories when needed.
+- Implement collection/item rules.
+- Coordinate script generation.
+
+Repositories:
+- Contain Mongoose/database operations.
+- Hide database implementation from services.
+- No HTTP logic.
+- No request/response handling.
+
+Models:
+- Define MongoDB document schemas.
+- Add indexes, defaults, constraints, and timestamps.
+
+Recommended Backend Structure
+-----------------------------
+server/
+  src/
+    app.ts
+    server.ts
+
+    config/
+      env.ts
+      database.ts
+
+    modules/
+      auth/
+        auth.routes.ts
+        auth.controller.ts
+        auth.service.ts
+        auth.repository.ts
+        auth.validation.ts
+        auth.types.ts
+
+      users/
+        user.model.ts
+        user.routes.ts
+        user.controller.ts
+        user.service.ts
+        user.repository.ts
+
+      library-items/
+        library-item.model.ts
+        library-item.routes.ts
+        library-item.controller.ts
+        library-item.service.ts
+        library-item.repository.ts
+        library-item.validation.ts
+        library-item.types.ts
+
+      collections/
+        collection.model.ts
+        collection.routes.ts
+        collection.controller.ts
+        collection.service.ts
+        collection.repository.ts
+        collection.validation.ts
+        collection.types.ts
+
+      generator/
+        generator.routes.ts
+        generator.controller.ts
+        generator.service.ts
+        generator.types.ts
+
+      vault/
+        secret.model.ts
+        vault.routes.ts
+        vault.controller.ts
+        vault.service.ts
+        vault.repository.ts
+        vault.validation.ts
+
+    middleware/
+      auth.middleware.ts
+      role.middleware.ts
+      validate.middleware.ts
+      error.middleware.ts
+
+    utils/
+      ApiError.ts
+      asyncHandler.ts
+      encryption.ts
+      logger.ts
+
+    types/
+      express.d.ts
+
+  tests/
+  .env
+  .env.example
+  package.json
+  tsconfig.json
+
+Important:
+The feature should be called "library-items", not simply "library", because the stored entity is a LibraryItem. "Library" is the product area; "LibraryItem" is the domain entity.
+
+Core Domain Entities
+--------------------
+MVP entities:
+
+1. User
+2. LibraryItem
+3. Collection
+
+Future entity:
+4. Secret
+
+LibraryItem is the central Noreium entity.
+
+LibraryItem types:
+- TOOL
+- API
+- WEBSITE
+- RESOURCE
+
+Do NOT initially create separate Tool, Api, Website, and Resource models. Use one LibraryItem model with a type field and type-specific metadata.
+
+Relationships
+-------------
+User
+  -> owns many LibraryItems
+  -> owns many Collections
+  -> later owns many Secrets
+
+Collection
+  -> belongs to one User
+  -> contains many LibraryItems
+
+LibraryItem
+  -> belongs to one User
+  -> can belong to many Collections
+
+For MongoDB MVP, keep collection membership inside Collection as an array of LibraryItem ObjectIds instead of creating a separate CollectionItem collection.
+
+Data Model Plan
+---------------
+USER
+
+Required:
+- _id
+- email
+- passwordHash
+- role
+- createdAt
+- updatedAt
+
+Role:
+- USER
+- ADMIN
+
+Indexes:
+- unique email
+
+Security:
+- passwordHash should never be returned by normal queries.
+
+LIBRARY ITEM
+
+Required:
+- _id
+- ownerId
+- type
+- name
+- createdAt
+- updatedAt
+
+Optional:
+- description
+- url
+- tags
+- metadata
+
+Type:
+- TOOL
+- API
+- WEBSITE
+- RESOURCE
+
+Metadata examples:
+
+Tool:
+- windowsCommand
+- linuxCommand
+- macCommand later
+- version information later
+
+API:
+- docsUrl
+- dashboardUrl
+- apiKeyRequired
+- provider information
+
+Website:
+- category
+- favicon later
+
+Resource:
+- resourceType
+- author
+- source information
+
+Important rule:
+Frequently searched/filtered fields should remain top-level fields. Do not put the entire document inside metadata.
+
+COLLECTION
+
+Required:
+- _id
+- ownerId
+- name
+- itemIds
+- createdAt
+- updatedAt
+
+Optional:
+- description
+- platform preferences later
+- environment/profile information later
+
+SECRET (future)
+- _id
+- ownerId
+- name
+- encryptedValue
+- metadata if needed
+- createdAt
+- updatedAt
+
+Do not build Secret first. It adds security complexity and is not required to prove the MVP.
+
+Authentication Plan
+-------------------
+MVP:
+- Register
+- Login
+- Logout
+- Get current user
+
+Authentication flow:
+1. User registers.
+2. Password is hashed.
+3. User is stored.
+4. User logs in.
+5. Server issues authenticated session/token.
+6. Protected routes require authentication.
+7. User identity is attached to request.
+8. Services use the authenticated user ID for ownership checks.
+
+Authorization:
+- USER: manage own data.
+- ADMIN: platform-level management later.
+
+Do not implement complicated permissions in V1. The primary authorization rule is ownership.
+
+Ownership Security
+------------------
+Every user-owned query should be scoped to the authenticated owner.
+
+Correct pattern:
+- find item by item ID AND owner ID
+- update item by item ID AND owner ID
+- delete item by item ID AND owner ID
+- find collection by collection ID AND owner ID
+
+Never assume that knowing an ObjectId grants access.
+
+A user must never be able to read or modify another user's library items or collections by changing an ID in a request.
+
+API Plan
+--------
+Authentication:
+- POST /api/auth/register
+- POST /api/auth/login
+- POST /api/auth/logout
+- GET /api/auth/me
+
+Library Items:
+- GET /api/library-items
+  List the authenticated user's items.
+  Supports search/filter later.
+
+- GET /api/library-items/:id
+  Return one owned item.
+
+- POST /api/library-items
+  Create an item.
+
+- PUT /api/library-items/:id
+  Update an owned item.
+
+- DELETE /api/library-items/:id
+  Delete an owned item.
+
+Collections:
+- GET /api/collections
+- GET /api/collections/:id
+- POST /api/collections
+- PUT /api/collections/:id
+- DELETE /api/collections/:id
+
+Collection items:
+- POST /api/collections/:id/items
+  Add a library item to a collection.
+
+- DELETE /api/collections/:id/items/:itemId
+  Remove a library item from a collection.
+
+Generator:
+- POST /api/generator/script
+  Generate a setup script for a collection and platform.
+
+- POST /api/generator/checklist
+  Generate a manual checklist later.
+
+Future Vault:
+- GET /api/vault
+- POST /api/vault
+- PUT /api/vault/:id
+- DELETE /api/vault/:id
+
+Library Item API Behavior
+-------------------------
+Create:
+Input:
+- type
+- name
+- description
+- url
+- tags
+- metadata
+
+Server adds:
+- ownerId
+- timestamps
+
+Validation:
+- type must be supported.
+- name must be present and within limits.
+- URL must be valid when supplied.
+- metadata must be an object.
+- tags must be an array of strings.
+
+Read:
+- Return only the authenticated user's items.
+- Support filters later:
+  - type
+  - tags
+  - search
+  - pagination
+
+Update:
+- Do not allow client to change ownerId.
+- Do not allow client to change protected system fields.
+- Validate updated values.
+
+Delete:
+- Confirm ownership.
+- Delete the item.
+- Decide later whether references in collections should also be cleaned automatically.
+
+Collection API Behavior
+-----------------------
+Create collection:
+- name
+- description
+
+The server sets ownerId from authenticated user.
+
+Add item:
+1. Find collection owned by current user.
+2. Find item owned by current user.
+3. Reject if either does not exist.
+4. Reject or ignore duplicate membership.
+5. Add item ID to collection.
+
+Remove item:
+1. Confirm collection ownership.
+2. Remove item ID from itemIds.
+
+Delete collection:
+- Confirm ownership.
+- Delete collection.
+- Library items remain untouched.
+
+Generator Plan
+--------------
+The generator is the feature that makes Noreium more than a storage app.
+
+Flow:
+1. User selects a collection.
+2. User selects target platform.
+3. Backend retrieves the collection.
+4. Backend retrieves its library items.
+5. Backend examines item metadata.
+6. Backend extracts the appropriate command.
+7. Backend orders commands.
+8. Backend builds the final script.
+9. Backend returns the script and metadata.
+
+Supported initial platforms:
+- Windows
+- Linux
+
+Windows command sources:
+- winget
+- direct installer command if needed later
+
+Linux command sources:
+- apt initially
+- generic shell command
+- distro-specific support later
+
+Generator should skip items with no installation command and report them separately.
+
+Example result concept:
+- script
+- platform
+- included items
+- skipped items
+- warnings
+
+The generator should not directly query MongoDB. It should use the service/repository layers.
+
+Validation Plan
+---------------
+Use Zod for request validation.
+
+Validation should cover:
+- registration
+- login
+- library item creation
+- library item update
+- collection creation
+- collection update
+- collection item operations
+- generator requests
+
+Validation should happen before the controller executes business logic.
+
+Error Handling Plan
+-------------------
+Use one application error class for expected errors.
+
+Typical errors:
+- 400 Bad Request
+- 401 Unauthorized
+- 403 Forbidden
+- 404 Not Found
+- 409 Conflict
+- 422 Unprocessable Entity when useful
+- 500 Internal Server Error
+
+Central error middleware converts errors into consistent API responses.
+
+Recommended response shape:
+
+success:
+- true/false
+
+data:
+- result when successful
+
+message:
+- human-readable message
+
+errors:
+- validation details when relevant
+
+Do not leak:
+- database internals
+- stack traces in production
+- password hashes
+- secret values
+- encryption keys
+
+Database Plan
+-------------
+MongoDB database:
+- noreium
+
+Initial collections:
+- users
+- libraryitems
+- collections
+
+Future:
+- secrets
+- auditlogs
+- sessions if needed
+- integrations
+
+Important indexes:
+- users.email unique
+- libraryItems.ownerId
+- libraryItems.ownerId + type
+- collections.ownerId
+
+Search:
+For MVP, normal indexed filtering is enough.
+Later use MongoDB text search or another search solution if the library becomes large.
+
+Module Design
+-------------
+AUTH MODULE
+Responsibilities:
+- registration
+- login
+- logout
+- current user
+- credential verification
+- token/session management
+
+USER MODULE
+Responsibilities:
+- current profile
+- user management later
+- admin user management later
+
+LIBRARY-ITEM MODULE
+Responsibilities:
+- CRUD
+- search
+- filtering
+- item validation
+- ownership
+
+COLLECTION MODULE
+Responsibilities:
+- CRUD
+- item membership
+- ownership
+- collection retrieval with items
+
+GENERATOR MODULE
+Responsibilities:
+- platform selection
+- command extraction
+- script composition
+- checklist generation later
+
+VAULT MODULE (future)
+Responsibilities:
+- secure secret storage
+- encryption/decryption
+- secret access control
+- audit trail later
+
+Important Controller Rule
+-------------------------
+Controllers should remain thin.
+
+A controller should:
+1. Read request data.
+2. Call a service.
+3. Return the result.
+
+A controller should NOT:
+- write MongoDB queries
+- contain complex business rules
+- generate scripts directly
+- hash passwords directly
+- encrypt secrets directly
+- decide ownership rules by itself
+
+Important Service Rule
+----------------------
+Services contain application behavior.
+
+Examples:
+- Verify item ownership.
+- Prevent invalid collection membership.
+- Generate scripts.
+- Coordinate multiple repositories.
+- Enforce business rules.
+
+Important Repository Rule
+-------------------------
+Repositories only handle persistence.
+
+Examples:
+- find
+- findOne
+- create
+- update
+- delete
+- query filters
+- populate operations
+
+Repositories should not:
+- send HTTP responses
+- inspect req/res
+- decide user permissions
+- generate scripts
+
+Middleware Plan
+---------------
+AUTH MIDDLEWARE
+- Read authentication credentials.
+- Verify them.
+- Attach authenticated user to request.
+
+ROLE MIDDLEWARE
+- Check USER/ADMIN when needed.
+
+VALIDATION MIDDLEWARE
+- Parse request body/query/params.
+- Reject invalid input.
+
+ERROR MIDDLEWARE
+- Convert errors into consistent responses.
+
+Later:
+- rate limiting
+- request logging
+- security headers
+- CORS policy
+- request ID / tracing
+
+Configuration Plan
+------------------
+Environment variables:
+
+APP_ENV
+PORT
+MONGODB_URI
+JWT_SECRET or equivalent auth configuration
+CLIENT_URL
+
+Future:
+ENCRYPTION_KEY
+EMAIL_PROVIDER settings
+CLOUD storage settings
+THIRD_PARTY API credentials
+
+Use .env.example for documentation.
+Never commit .env.
+
+Testing Plan
+------------
+Unit tests:
+- services
+- validation
+- generator logic
+
+Integration tests:
+- authentication endpoints
+- library-item endpoints
+- collection endpoints
+- generator endpoints
+
+Security tests:
+- unauthenticated access rejected
+- user A cannot access user B data
+- user cannot change ownerId
+- user cannot elevate role
+- invalid input rejected
+
+Generator tests:
+- Windows command selection
+- Linux command selection
+- missing commands
+- duplicate items
+- empty collections
+
+Development Order
+-----------------
+PHASE 1 — Backend Foundation
+1. Create Node/TypeScript project.
+2. Configure ESLint and Prettier.
+3. Configure environment variables.
+4. Configure Express.
+5. Configure MongoDB/Mongoose.
+6. Add health endpoint.
+7. Add central error handling.
+8. Confirm local server + database connection.
+
+PHASE 2 — Authentication
+1. User model.
+2. Registration.
+3. Password hashing.
+4. Login.
+5. Authentication middleware.
+6. Current-user endpoint.
+7. Protect routes.
+
+PHASE 3 — Library Items
+1. LibraryItem model.
+2. Zod validation.
+3. Repository.
+4. Service.
+5. Controller.
+6. Routes.
+7. CRUD tests.
+8. Ownership protection.
+9. Search/filter.
+
+PHASE 4 — Collections
+1. Collection model.
+2. Repository.
+3. Service.
+4. Controller.
+5. Routes.
+6. Add item.
+7. Remove item.
+8. Ownership checks.
+9. Collection retrieval with items.
+
+PHASE 5 — Generator
+1. Generator types.
+2. Generator service.
+3. Windows script generation.
+4. Linux script generation.
+5. Missing-command handling.
+6. Generator controller.
+7. Routes.
+8. Tests.
+
+PHASE 6 — Frontend Integration
+1. Connect React to authentication.
+2. Library item CRUD UI.
+3. Collection UI.
+4. Generator UI.
+5. Error/loading states.
+6. Search/filter UI.
+
+PHASE 7 — Security & Polish
+1. Rate limiting.
+2. Security headers.
+3. CORS restrictions.
+4. Better logging.
+5. Input hardening.
+6. Production environment configuration.
+7. Backup strategy.
+
+PHASE 8 — Vault
+Only after the MVP works.
+1. Secret model.
+2. Encryption design.
+3. Key management.
+4. Secret API.
+5. Access controls.
+6. Audit logging.
+7. Rotation/reminder mechanisms.
+
+API Response Standard
+---------------------
+Use a consistent structure.
+
+Success:
+- success: true
+- data: result
+
+Failure:
+- success: false
+- message: readable error
+- errors: structured validation errors when applicable
+
+HTTP status codes should be meaningful and predictable.
+
+Future Features
+----------------
+Do not implement during MVP.
+
+Potential future modules:
+- Environment profiles
+- GitHub integration
+- Docker environment setup
+- Project templates
+- Browser extension sync
+- Import/export
+- Backup/restore
+- Team workspaces
+- Shared public collections
+- Public library
+- CLI client
+- Machine detection
+- Installed-software detection
+- Script versioning
+- Script history
+- Scheduled secret rotation reminders
+- API-key provider integrations
+- AI-assisted setup recommendations
+
+Long-Term Architecture
+----------------------
+The long-term Noreium architecture can evolve toward:
+
+Noreium Web
+Noreium API
+Noreium CLI
+Noreium Desktop Agent
+Noreium Public Library
+
+All can consume the same core API and data model.
+
+Possible future flow:
+
+Web / CLI / Agent
+       |
+       v
+Noreium API
+       |
+       +-- Authentication
+       +-- Library
+       +-- Collections
+       +-- Generator
+       +-- Vault
+       +-- Integrations
+       |
+       v
+MongoDB
+
+MVP Definition
+--------------
+Noreium MVP is complete when the following works end-to-end:
+
+1. User can register/login.
+2. User can create a LibraryItem.
+3. User can edit/delete/view their items.
+4. User can classify items as TOOL/API/WEBSITE/RESOURCE.
+5. User can create a Collection.
+6. User can add/remove their LibraryItems from a Collection.
+7. User can open a Collection and see its items.
+8. User can choose Windows or Linux.
+9. Noreium can generate a setup script from that Collection.
+10. Another user cannot access or modify the first user's data.
+
+Do not consider the MVP complete just because CRUD works. The generator and ownership security are core parts of the product.
+
+Final Architecture Principle
+-----------------------------
+Keep the architecture simple but disciplined.
+
+The core should be:
+
+User
+  |
+  +-- LibraryItems
+  |
+  +-- Collections
+  |
+  +-- Generator
+
+Use:
+
+Route
+  -> Middleware
+  -> Controller
+  -> Service
+  -> Repository
+  -> Model
+  -> MongoDB
+
+Do not build the future before the MVP exists.
+
+The first real technical milestone for Noreium is:
+authenticated user -> create LibraryItem -> create Collection -> add item -> generate Windows/Linux setup script.
