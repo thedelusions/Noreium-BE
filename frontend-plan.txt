@@ -1,0 +1,166 @@
+FRONTEND PLAN FOR NOREIUM
+Phase 1 — Plan (produce decisions; do not implement)
+
+Source of truth used for this plan: backend source under `src/modules/*` (auth, library-items, collections, generator) and model files `src/modules/*/*.model.ts`.
+
+1) Backend inventory (routes, auth level, request/response shapes — derived from controllers and validation)
+
+- POST /api/auth/register (public)
+  - Request body: { email: string, password: string }
+  - Response: { success: true, data: { id: string, email: string, role: 'USER'|'ADMIN' } }
+
+- POST /api/auth/login (public)
+  - Request body: { email: string, password: string }
+  - Response: { success: true, data: { token: string } }
+
+- GET /api/auth/me (protected: JWT)
+  - Request: Authorization: Bearer <token>
+  - Response: { success: true, data: { id: string, email: string, role } }
+
+- GET /api/library-items (protected)
+  - Response: { success: true, data: ILibraryItem[] }
+
+- GET /api/library-items/:id (protected)
+  - Response: { success: true, data: ILibraryItem }
+
+- POST /api/library-items (protected)
+  - Request body: { type: 'TOOL'|'API'|'WEBSITE'|'RESOURCE', name: string, description?: string, url?: string, tags?: string[], metadata?: object }
+  - Response: created ILibraryItem
+
+- PUT /api/library-items/:id (protected)
+  - Request body: any of create fields (ownerId is ignored)
+  - Response: updated ILibraryItem
+
+- DELETE /api/library-items/:id (protected)
+  - Response: success
+
+- GET /api/collections (protected)
+  - Response: ICollection[] (includes itemIds: string[])
+
+- GET /api/collections/:id (protected)
+  - Response: ICollection (with itemIds)
+
+- POST /api/collections (protected)
+  - Request body: { name: string, description?: string }
+  - Response: created ICollection
+
+- PUT /api/collections/:id (protected)
+  - Request body: { name?, description? }
+  - Response: updated ICollection
+
+- DELETE /api/collections/:id (protected)
+  - Response: success
+
+- POST /api/collections/:id/items (protected)
+  - Request body: { itemId: string }
+  - Response: updated ICollection
+
+- DELETE /api/collections/:id/items/:itemId (protected)
+  - Response: updated ICollection
+
+- POST /api/generator/script (protected)
+  - Request body: { collectionId: string, platform: 'windows'|'linux' }
+  - Response: { platform, script: string, includedItems: [{id,name,command}], skippedItems: [{id,name,reason}] }
+
+Models (derived from Mongoose model files in `src/modules/*/*.model.ts`)
+- User: { _id, email, passwordHash (not returned), role, createdAt, updatedAt }
+- LibraryItem: { _id, ownerId, type, name, description?, url?, tags?: string[], metadata?: any, createdAt, updatedAt }
+- Collection: { _id, ownerId, name, description?, itemIds: string[], createdAt, updatedAt }
+
+2) Page / route map (one frontend route per user-facing use case)
+- /login -> POST /api/auth/login
+- /register -> POST /api/auth/register
+- /me/profile -> GET /api/auth/me (profile view)
+- /library -> GET /api/library-items (list)
+- /library/new -> POST /api/library-items (create)
+- /library/:id -> GET /api/library-items/:id (view) + PUT/DELETE for edit/delete
+- /collections -> GET /api/collections (list)
+- /collections/new -> POST /api/collections
+- /collections/:id -> GET /api/collections/:id (view items) + POST /api/collections/:id/items + DELETE /api/collections/:id/items/:itemId
+- /generator -> UI to pick collection + POST /api/generator/script and display returned script
+
+3) Package layout (where frontend lives and internal directories)
+- Frontend root: apps/web (React + Vite). Create this package inside the repo workspace.
+- Internal folders:
+  - src/main.tsx (app bootstrap)
+  - src/App.tsx (route setup)
+  - src/pages/ (one file per route above, named e.g. LoginPage.tsx)
+  - src/components/ (shared UI: Header, Footer, Shell, ProtectedRoute, Form components)
+  - src/features/ (feature folders: auth/, libraryItems/, collections/, generator/ — each with hooks, components, types)
+  - src/api/ (fetch client, adapters)
+  - src/hooks/ (shared hooks like useAuth())
+  - src/styles/ (tailwind entry + design tokens)
+  - src/types/ (shared types; see Types decision below)
+
+4) Data layer: TanStack Query design
+- Query client: central `QueryClient` in `src/main.tsx` with default retry disabled for auth-protected calls.
+- Fetcher: a small wrapper around `fetch` or `ky` that attaches `Authorization: Bearer <token>` when present; used by React Query hooks.
+- Hook naming and keys:
+  - Auth: `useLogin()` (mutation), `useRegister()` (mutation), `useMe()` (query key: ['me'])
+  - Library items:
+    - `useLibraryItems()` — query key ['libraryItems'] -> GET /api/library-items
+    - `useLibraryItem(id)` — key ['libraryItems', id] -> GET /api/library-items/:id
+    - `useCreateLibraryItem()` — mutation -> onSuccess invalidate ['libraryItems']
+    - `useUpdateLibraryItem(id)` — mutation -> onSuccess invalidate ['libraryItems', id] and ['libraryItems']
+    - `useDeleteLibraryItem(id)` — mutation -> onSuccess invalidate ['libraryItems']
+  - Collections:
+    - `useCollections()` key ['collections'] -> GET /api/collections
+    - `useCollection(id)` key ['collections', id] -> GET /api/collections/:id
+    - Create/Update/Delete/AddItem/RemoveItem mutations invalidate relevant keys: ['collections'] and ['collections', id] and also ['libraryItems'] when collection removal should not affect items (items persist)
+  - Generator:
+    - `useGenerateScript()` mutation calling POST /api/generator/script — no cache to persist, returns result for UI display
+
+- Cache invalidation rules: on create/delete/update library-items invalidate ['libraryItems']; on collection change invalidate ['collections'] and ['collections', id]. When adding/removing items in a collection, invalidate ['collections', id]. Do not delete library-items cache when removing from collection.
+
+5) Types
+- Decision: create a `packages/shared-types` TypeScript package that re-exports canonical types and Zod schemas from the backend where possible. Short-term: mirror minimal types in `apps/web/src/types/` matching backend model fields; long-term: migrate to importing backend types via a build-time `shared-types` package.
+- Immediate mappings (frontend types in `src/types`): `User`, `LibraryItem`, `Collection`, `GeneratorResult`, matching fields listed in model section.
+
+6) Auth flow (strict decision)
+- Screens: `/login` and `/register` pages.
+- Upon login, the frontend receives a JWT token from `/api/auth/login` and will store it in memory and persist an encrypted copy in `localStorage` under key `noreium:token` ONLY if user toggles "Keep me signed in". Primary storage is an in-memory AuthProvider to avoid XSS leaks.
+- On app bootstrap, `AuthProvider` will read `localStorage` and populate memory token if present.
+- Token handling: fetch wrapper attaches `Authorization: Bearer <token>` for protected requests.
+- No refresh token flow is implemented because backend provides no refresh endpoint. If a 401 is received, the app will redirect to `/login` and clear stored token.
+- Route guarding: `ProtectedRoute` component checks `useMe()` (Query). If unauthenticated, redirect to `/login`.
+
+7) Forms and validation
+- Decision: use `react-hook-form` + `@hookform/resolvers` + `zod` for client validation. When Zod schemas are available from the backend module, import and use them; otherwise mirror validation rules locally in `src/features/*/validation.ts` and plan to sync them into `packages/shared-types` later.
+
+8) Component architecture
+- Shared UI: `Shell` (header/sidebar), `Header`, `PageContainer`, `FormField`, `Button`, `ErrorBanner`, `LoadingSpinner`.
+- Feature folders contain page-specific components: `src/features/libraryItems/components/LibraryItemForm.tsx`, `LibraryItemList.tsx`, etc.
+- File conventions: PascalCase for components, `*.page.tsx` for top-level pages, index.ts exports for feature modules.
+
+9) Styling conventions
+- Tailwind CSS via `apps/web/tailwind.config.js` and a single `src/styles/index.css` that imports Tailwind base/components/utilities.
+- Keep design tokens in `tailwind.config.js` theme.extend and a small `src/styles/tokens.css` for CSS variables when needed.
+- Use utility-first Tailwind for most UI. Create a small `ui/` component set for consistent spacing/typography.
+
+10) Environment variables (no secret values)
+- `VITE_API_BASE_URL` — base URL for backend API (e.g. http://localhost:3000)
+- `VITE_APP_ENV` — environment (development/production)
+- `VITE_ENABLE_PERSIST` — optional flag to allow token persistence
+
+11) Error & loading states (consistent decision)
+- Use React Query's `isLoading`, `isError`, `error`. Create `ErrorBanner` that accepts an error object and renders friendly message. Create `useAsyncStatus` helper to map query states to { loading, error, idle }.
+- Global error boundary at App level to catch render errors; within pages use `ErrorBanner` and `LoadingSpinner` components.
+
+12) Phase 2 — Build order (numbered, dependency-correct)
+1. Create `apps/web` Vite + React package, add Tailwind, React Router, React Query, React Hook Form, Zod, and project tsconfig paths for shared types.
+2. Implement API client (fetch wrapper) and `QueryClient` provider + `AuthProvider` (in-memory token + localStorage opt-in). Add `ProtectedRoute` component.
+3. Implement auth pages (`/login`, `/register`) and `useLogin`, `useRegister`, `useMe` hooks. Verify login flow end-to-end with backend.
+4. Implement app shell: `Header`, navigation, basic layout and route scaffolding.
+5. Implement LibraryItems feature: list page, create/edit forms, hooks (`useLibraryItems`, `useCreateLibraryItem`, etc.) and wire up UI. Run typecheck/tests.
+6. Implement Collections feature: list, create, view collection (with items), add/remove item operations and hooks. Run typecheck/tests.
+7. Implement Generator UI (`/generator`) to select a collection and call `useGenerateScript` to display script and skipped items.
+8. Add shared-types package and migrate common types/Zod schemas from backend where available; update imports to use shared types.
+9. Add unit tests for critical hooks/services and integration tests for auth and one feature (use Vitest + Supertest or MSW).
+10. Polish: Tailwind tokens, accessibility checks, produce OpenAPI-powered docs or API client generation if desired.
+
+Notes and constraints
+- This plan uses the backend routes exactly as implemented under `src/modules/*`. If the backend route paths or request/response shapes change, update `frontend-plan.txt` and stop Phase 2 until approved.
+- Decision made to persist JWT in localStorage only on opt-in; chosen because backend does not set HttpOnly cookies.
+- Decision made to create `apps/web` as the frontend package in workspace root; this keeps the monorepo structure consistent.
+
+End of plan. Do not start Phase 2 until you approve this `frontend-plan.txt`.
